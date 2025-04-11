@@ -70,16 +70,17 @@ El formato de tu respuesta debe ser:
 **Pregunta:** ¿Cuántas prácticas están asociadas al laboratorio IACA?
 SQL: SELECT COUNT(*) FROM availables_pricing WHERE laboratory ILIKE 'IACA';
 
-
 ---
 **Pregunta:** ¿Qué insumos se utilizan en la práctica con ID 5024?
-SQL: SELECT ap.consumer FROM active_pricing ap JOIN practices p ON p.code = ap.code WHERE p.name ILIKE 'Hemograma completo' ORDER BY ap.updated_at DESC LIMIT 1;
+SQL: SELECT s.name FROM supplies s JOIN practices_in_practice pip ON pip.supply_id = s.id WHERE pip.practice_id = 5024;
 
+---
+**Pregunta:** ¿Cuál es el precio actual para consumidor de la práctica “Hemograma completo”?
+SQL: SELECT ap.consumer FROM active_pricing ap JOIN practices p ON p.code = ap.code WHERE p.name ILIKE 'Hemograma completo' ORDER BY ap.updated_at DESC LIMIT 1;
 
 ---
 **Pregunta:** ¿Qué usuario modificó por última vez la práctica con código 1102?
 SQL: SELECT u.name FROM practices p JOIN users u ON p.updated_by = u.id WHERE p.code = '1102' ORDER BY p.updated_at DESC LIMIT 1;
-
 
 ---
 
@@ -89,16 +90,31 @@ SQL: SELECT u.name FROM practices p JOIN users u ON p.updated_by = u.id WHERE p.
 @app.post("/chat")
 async def chat(request: Request):
     body = await request.json()
-    user_message = body.get("message")
 
-    completion = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": system_prompt_sql},
-            {"role": "user", "content": user_message}
-        ],
-        temperature=0,
-    )
+    user_message = body.get("mensaje") or body.get("message")
+
+    if not user_message or not isinstance(user_message, str):
+        return {
+            "error": "No se recibió un mensaje válido. Asegurate de enviar un campo 'mensaje' (string) en el body.",
+            "message": None,
+            "sql_query": None
+        }
+
+    try:
+        completion = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt_sql},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0,
+        )
+    except Exception as e:
+        return {
+            "error": f"Error al generar respuesta de OpenAI: {str(e)}",
+            "message": None,
+            "sql_query": None
+        }
 
     response_text = completion.choices[0].message["content"].strip()
     print("🧠 Respuesta del modelo:", response_text)
@@ -124,14 +140,13 @@ async def chat(request: Request):
             if db_response.data:
                 data = db_response.data
 
-                # Generar una respuesta según los campos presentes
                 if all("name" in d and "price" in d and "description" in d for d in data):
-                    respuesta = "Estos son los platos disponibles:\n\n"
+                    respuesta = "Estos son los resultados:\n\n"
                     for item in data:
                         respuesta += f"- {item['name']}: {item['description']} (${item['price']})\n"
                 elif all("name" in d for d in data):
                     nombres = ", ".join(d["name"] for d in data)
-                    respuesta = f"Los platos disponibles son: {nombres}."
+                    respuesta = f"Los resultados son: {nombres}."
                 elif all("count" in d for d in data):
                     respuesta = f"Hay {data[0]['count']} elementos que cumplen con esa condición."
                 else:
